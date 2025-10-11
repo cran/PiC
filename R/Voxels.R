@@ -67,8 +67,8 @@ Voxels <- function(a, filename = "XXX", dimVox = 2, th = 2, output_path = tempdi
   colnames(AAvox) <- c("u", "v", "w")
 
   # crea una tabella di corrispondenza voxel/punto
-  AAvoxRAW<-data.frame(CC$x,CC$y,CC$z, AAvox$u,AAvox$v,AAvox$w)
-  fwrite(AAvoxRAW, file.path(output_path, paste0(plot,'_vox_raw.txt')), row.names = FALSE)
+  # AAvoxRAW<-data.frame(CC$x,CC$y,CC$z, AAvox$u,AAvox$v,AAvox$w)
+  # fwrite(AAvoxRAW, file.path(output_path, paste0(plot,'_vox_raw.txt')), row.names = FALSE)
 
   # crea la nuvola di voxel, con valori univoci e quarta colonna col numero di punti per voxel
   AAvox1 <- data.frame(AAvox %>% fcount(u, v, w))

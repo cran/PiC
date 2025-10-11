@@ -176,6 +176,98 @@ SegOne <- function(a, filename = "Elab_single_tree", dimVox = 2,
   leafPoints<-data.frame(leafon$x, leafon$y, leafon$z)
   colnames(leafPoints)<-c("x", "y", "z")
   
+  
+  ######
+  setDT(a)
+  setDT(woodPoints)
+  setDT(leafPoints)
+  
+  # 1. Trova coordinate base albero (punto più basso)
+  tree_base <- woodPoints[which.min(z), .(X = x, Y = y, Z_min = z)]
+  
+  # 2. Calcola min_z e max_z in un buffer di 1m
+  xrng <- c(tree_base$X - 0.5, tree_base$X + 0.5)
+  yrng <- c(tree_base$Y - 0.5, tree_base$Y + 0.5)
+  
+  punti_vicini <- a[
+    between(x, xrng[1], xrng[2]) & 
+      between(y, yrng[1], yrng[2]),
+    .(z)
+  ]
+  
+  tree_metrics <- tree_base[, ":="(
+    min_z = fifelse(nrow(punti_vicini) > 0, min(punti_vicini$z), min(woodPoints$z)),
+    max_z = fifelse(nrow(punti_vicini) > 0, max(punti_vicini$z), max(woodPoints$z))
+  )]
+  
+  # 3. Calcola altezza albero
+  tree_metrics[, Height_m := round(max_z - min_z, 2)]
+  
+  # 4. Calcolo DBH adattato per singolo albero
+  compute_dbh_single <- function(wood_data, base_z) {
+    target_z <- base_z + 1.3
+    pts <- wood_data[
+      between(z, target_z - 0.05, target_z + 0.05),
+      .(z, x, y)
+    ]
+    
+    if(nrow(pts) < 5) {
+      message("Punti DBH insufficienti: ", nrow(pts))
+      return(NA_real_)
+    }
+    
+    fit <- tryCatch({
+      params <- conicfit::CircleFitByPratt(as.matrix(pts[, .(x, y)]))
+      round(params[3] * 2 * 100, 1)  # DBH in cm
+    }, error = function(e) {
+      message("Errore calcolo DBH: ", e$message)
+      NA_real_
+    })
+  }
+  
+  tree_metrics[, DBH_cm := compute_dbh_single(woodPoints, Z_min)]
+  
+  # 5. Calcolo base chioma
+  calculate_cbh_single <- function(tree_height) {
+    combined_points <- rbind(woodPoints, leafPoints, fill = TRUE)
+    
+    agb_buffer <- combined_points[
+      between(x, tree_base$X - 1.5, tree_base$X + 1.5) & 
+        between(y, tree_base$Y - 1.5, tree_base$Y + 1.5),
+      .(z)
+    ]
+    
+    if(nrow(agb_buffer) < 10) return(NA_real_)
+    
+    z_normalized <- agb_buffer$z - tree_base$Z_min
+    z_sorted <- sort(z_normalized)
+    lower_points <- z_sorted[z_sorted <= (tree_height/2)]
+    
+    if(length(lower_points) < 10) return(NA_real_)
+    
+    gaps <- diff(lower_points)
+    max_gap_idx <- which.max(gaps)
+    cbh <- lower_points[max_gap_idx + 1] + tree_base$Z_min
+    
+    round(cbh, 2)
+  }
+  
+  tree_metrics[, Crown_Base_m := calculate_cbh_single(Height_m)]
+  
+  # Formattazione finale
+  plot_metrics <- tree_metrics[, .(
+    X_tree = round(X, 2),
+    Y_tree = round(Y, 2),
+    Z_min = round(Z_min, 2),
+    Height_m,
+    DBH_cm,
+    Crown_Base_m
+  )]
+  
+  # Scrivi file metriche
+  fwrite(plot_metrics, file.path(output_path, paste0(filename, "_metrics.csv")), sep = ";")
+  #####
+  
   fwrite(woodPoints, file.path(output_path, paste0(filename,'_DBSCAN_wood.txt')))
   fwrite(leafPoints, file.path(output_path, paste0(filename,'_DBSCAN_leaf.txt')))
   
