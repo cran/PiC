@@ -23,10 +23,28 @@ utils::globalVariables(c(
   "Crown_Base_m",
   
   # Other computed columns
-  "join_key", "n_points", "num",
+  "join_key", "cluster","n_points", "num",
   "w_normalized", "coverage_degree", "N",
   "floor_w", "height_bin",
   
   # Voxel columns
-  "xP", "yP", "zP", "wmin", "w0"
+  "xP", "yP", "zP", "wmin", "w0",
+
+  # Variables from SegOne v4
+  "i.cluster",
+  "n_voxels",
+  "x_center",
+  "y_center",
+  "z_center",
+  "DBH_RMSE_cm",
+  "h_dist",
+
+  # Variables from SegOne v4
+  "i.cluster",
+  "n_voxels",
+  "x_center",
+  "y_center",
+  "z_center",
+  "DBH_RMSE_cm",
+  "h_dist"
 ))

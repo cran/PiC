@@ -96,8 +96,8 @@ test_that("Floseg funziona correttamente con dati forestali", {
   # Esegui Floseg
   result <- Floseg(forest_data, filename = "test_forest",
                    soil_dim = 0.3, 
-                   th = 5,        
-                   N = 5,
+                   th = 3,        
+                   N = 10,
                    output_path = temp_path)
   
   # Verifica che i file siano stati creati

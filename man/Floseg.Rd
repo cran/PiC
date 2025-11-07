@@ -17,7 +17,7 @@ Floseg(a, filename="XXX", soil_dim = 0.3, th = 20, N=500, output_path = tempdir(
 
 \item{N}{- Minimum number of voxel to generate a cluster. Default = 500}
 
-\item{output_path}{Directory in cui scrivere i file di output. Default = tempdir()}
+\item{output_path}{Directory where output files will be written. Default = tempdir()}
 }
 \value{
 2 files (.txt) output. 1. Forest floor pointcolud; 2. AGB pointcloud
