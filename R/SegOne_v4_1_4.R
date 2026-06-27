@@ -1,11 +1,12 @@
 #' @name SegOne
 #' @title Single Tree Wood-Leaf Segmentation and Comprehensive Metrics Calculation
-#' 
-#' @description 
-#' Performs wood-leaf segmentation and calculates comprehensive structural metrics for 
-#' individual trees from terrestrial laser scanning (TLS) point cloud data. This function 
-#' implements a unified approach consistent with the Forest_seg pipeline, ensuring 
-#' methodological coherence across the PiC package.
+#'
+#' @description
+#' Performs wood-leaf segmentation and calculates comprehensive structural metrics for
+#' individual trees from terrestrial laser scanning (TLS) point cloud data.
+#'
+#' Version 4.2 uses shared_utils.R functions for code reuse and consistency
+#' with the Forest_seg pipeline.
 #' 
 #' 
 #' The analysis follows a four-stage processing pipeline:
@@ -52,9 +53,9 @@
 #' @return 
 #' Invisibly returns a named list containing:
 #' \describe{
-#'   \item{wood_file}{Character string with full path to wood component point cloud file}
-#'   \item{leaf_file}{Character string with full path to foliage point cloud file}
-#'   \item{metrics_file}{Character string with full path to metrics CSV file 
+#'   \item{las_file}{Character string with full path to classified LAS file
+#'     (class 4 = wood, class 5 = foliage)}
+#'   \item{metrics_file}{Character string with full path to metrics CSV file
 #'     (NULL if calculate_metrics = FALSE)}
 #'   \item{metrics}{data.table containing calculated tree structural metrics 
 #'     (NULL if calculate_metrics = FALSE)}
@@ -167,19 +168,14 @@
 #' }
 #' 
 #' ## Output Files
-#' 
-#' Three files are generated in \code{output_path}:
-#' 
+#'
+#' Two files are generated in \code{output_path}:
+#'
 #' \enumerate{
-#'   \item **Wood points**: \code{<filename>_Wood_eps<eps>_mpts<mpts>.txt}
+#'   \item **Classified LAS**: \code{<filename>_eps<eps>_mpts<mpts>.las}
 #'     \itemize{
-#'       \item Format: x, y, z, cls (cluster ID)
-#'       \item Contains all points classified as wood components
-#'     }
-#'   \item **Foliage points**: \code{<filename>_AGBnoWOOD_eps<eps>_mpts<mpts>.txt}
-#'     \itemize{
-#'       \item Format: x, y, z
-#'       \item Contains all non-wood vegetation points
+#'       \item Class 4 = wood points, Class 5 = foliage points
+#'       \item Single file replaces the two legacy .txt outputs
 #'     }
 #'   \item **Metrics**: \code{<filename>_metrics.csv} (if calculate_metrics = TRUE)
 #'     \itemize{
@@ -276,7 +272,7 @@
 utils::globalVariables(c("u", "v", "w", "cls", "x", "y", "z", "N", 
                          "coverage_degree", "X", "Y", "Z_min", "Height_m",
                          "DBH_cm", "Crown_Base_m", ".BY", ".I", ".N", ".SD",
-                         "max_col", "DBH", "DBH_valido", "w_normalized",
+                         "max_col", "DBH", "DBH_valido", "DBH_method", "w_normalized",
                          "floor_w", "min_z", "max_z", "z_norm", "height_bin"))
 
 SegOne <- function(a, 
@@ -293,39 +289,26 @@ SegOne <- function(a,
                    coverage_method = "linear") {
   
   tic('Total time')
-  
+
   ################################################################################
   # STAGE 0: INITIALIZATION AND VALIDATION
   ################################################################################
-  
+
   message("========================================")
-  message("SegOne v4.1.1: Single Tree Analysis")
-  message("Robust error handling + Adaptive density threshold")
+  message("SegOne v4.2: Single Tree Analysis")
+  message("Using shared_utils.R functions")
   message("========================================")
-  
+
   # Create output directory if needed
   if (!dir.exists(output_path)) {
     dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
     message("Created output directory: ", output_path)
   }
-  
-  # Load and validate input data
-  if (is.character(a)) {
-    message("Loading point cloud from file: ", basename(a))
-    a <- tryCatch({
-      fread(a, header = FALSE)
-    }, error = function(e) {
-      stop("Error reading input file: ", e$message, call. = FALSE)
-    })
-  }
-  
-  # Validate input format
-  a <- data.frame(a)
-  if (ncol(a) < 3) {
-    stop("Input must have at least 3 columns (x, y, z)", call. = FALSE)
-  }
-  colnames(a)[1:3] <- c("x", "y", "z")
-  a <- a[, 1:3]  # Keep only x, y, z columns
+
+  # Load and validate input using shared function
+  message("Loading point cloud...")
+  a <- .coerce_to_xyz_dt(a)
+  a <- as.data.frame(a)  # Convert back to data.frame for compatibility
   
   # Validate parameters
   if (dimVox <= 0) stop("dimVox must be positive", call. = FALSE)
@@ -355,14 +338,14 @@ SegOne <- function(a,
   message("")
   
   ################################################################################
-  # STAGE 1: WOOD SEGMENTATION
+  # STAGE 1: LOR (Ligneous Object Recognition)
   ################################################################################
   
-  message("Stage 1/4: Wood segmentation")
+  message("Stage 1/4: LOR (Ligneous Object Recognition)")
   message("  Voxelizing point cloud...")
   
-  # Perform wood segmentation using unified approach
-  wood_results <- .segment_wood_unified(
+  # Perform LOR (Ligneous Object Recognition) using unified approach
+  wood_results <- .lor_segment_unified(
     AGB = a, 
     dim = dim, 
     th = th, 
@@ -379,7 +362,7 @@ SegOne <- function(a,
   
   message("  Wood points identified: ", format(nrow(woodpoint), big.mark = ","))
   message("  Wood clusters detected: ", length(unique(woodpoint$cls)))
-  message("  Wood file saved: ", basename(wood_results$wood_file))
+  message("  LAS file will be saved after foliage separation")
   
   ################################################################################
   # STAGE 2: FOLIAGE SEPARATION
@@ -400,7 +383,19 @@ SegOne <- function(a,
   
   message("  Foliage points identified: ", format(nrow(AGB_def), big.mark = ","))
   message("  Wood/foliage ratio: ", round(nrow(woodpoint) / nrow(AGB_def), 2))
-  
+
+  # ---- Write single classified LAS (class 4 = wood, class 5 = foliage) ----
+  wood_las_pts    <- woodpoint[, .(X = x, Y = y, Z = z)]
+  wood_las_pts[,  Classification := 4L]
+  foliage_las_pts <- AGB_def[, .(X = x, Y = y, Z = z)]
+  foliage_las_pts[, Classification := 5L]
+  all_pts  <- rbind(wood_las_pts, foliage_las_pts)
+  .require_lidR()
+  las_obj  <- lidR::LAS(all_pts)
+  las_file <- file.path(output_path, paste0(plot, "_eps", eps, "_mpts", mpts, ".las"))
+  lidR::writeLAS(las_obj, las_file)
+  message("  LAS file saved: ", basename(las_file))
+
   ################################################################################
   # STAGE 3: TREE METRICS CALCULATION
   ################################################################################
@@ -453,20 +448,22 @@ SegOne <- function(a,
     message("    Height range: ", round(tree_metrics$min_z, 2), " to ", 
             round(tree_metrics$max_z, 2), " m")
     
-    # Calculate DBH using improved method (v2)
+    # Calculate DBH using shared cylindrical pre-filter + circle fitting
     message("  Computing DBH (Diameter at Breast Height)...")
-    tree_metrics <- .calculate_dbh_v2(
-      tree_metrics = tree_metrics,
-      woodpoint = woodpoint
+    dbh_res <- .calculate_dbh_core(
+      wood_points = woodpoint,
+      z_base      = tree_metrics$Z_min
     )
-    
-    # Check if DBH was successfully calculated (v4.1.1: ROBUST checking)
-    if ("DBH_cm" %in% names(tree_metrics) && 
-        !is.null(tree_metrics$DBH_cm) && 
-        length(tree_metrics$DBH_cm) > 0 && 
-        !is.na(tree_metrics$DBH_cm)) {
-      message("    DBH: ", tree_metrics$DBH_cm, " cm")
-      message("    DBH validation: PASSED")
+    tree_metrics[, ":="(
+      DBH_cm      = if (!is.na(dbh_res$DBH))      round(dbh_res$DBH      * 100, 1) else NA_real_,
+      DBH_RMSE_cm = if (!is.na(dbh_res$DBH_RMSE)) round(dbh_res$DBH_RMSE * 100, 2) else NA_real_,
+      DBH_valido  = dbh_res$DBH_valid,
+      DBH_method  = dbh_res$DBH_method
+    )]
+
+    if (isTRUE(dbh_res$DBH_valid)) {
+      message("    DBH: ", tree_metrics$DBH_cm, " cm (", dbh_res$DBH_method, ")")
+      message("    RMSE: ", tree_metrics$DBH_RMSE_cm, " cm")
     } else {
       message("    DBH: Not available (insufficient points or validation failed)")
     }
@@ -541,6 +538,11 @@ SegOne <- function(a,
       } else {
         NA_real_
       },
+      DBH_method = if("DBH_method" %in% names(tree_metrics) && !is.na(tree_metrics$DBH_method)) {
+        tree_metrics$DBH_method
+      } else {
+        NA_character_
+      },
 
       Crown_Base_m = if("Crown_Base_m" %in% names(tree_metrics) && !is.na(tree_metrics$Crown_Base_m)) {
         round(tree_metrics$Crown_Base_m, 2)
@@ -597,22 +599,20 @@ SegOne <- function(a,
   # Summary of output files
   message("\n========================================")
   message("Output Files Generated:")
-  message("1. Wood points: ", basename(wood_results$wood_file))
-  message("   -> ", format(nrow(woodpoint), big.mark = ","), " points")
-  message("2. Foliage points: ", basename(paste0(plot, "_AGBnoWOOD_eps", eps, "_mpts", mpts, ".txt")))
-  message("   -> ", format(nrow(AGB_def), big.mark = ","), " points")
+  message("1. Classified LAS: ", basename(las_file))
+  message("   -> ", format(nrow(woodpoint), big.mark = ","), " wood pts (class 4) + ",
+          format(nrow(AGB_def), big.mark = ","), " foliage pts (class 5)")
   if (calculate_metrics && !is.null(metrics_file)) {
-    message("3. Tree metrics: ", basename(metrics_file))
+    message("2. Tree metrics: ", basename(metrics_file))
     message("   -> ", ncol(plot_metrics), " metrics calculated")
   }
   message("========================================\n")
-  
+
   # Prepare return object
   result <- list(
-    wood_file = wood_results$wood_file,
-    leaf_file = file.path(output_path, paste0(plot, "_AGBnoWOOD_eps", eps, "_mpts", mpts, ".txt")),
+    las_file     = las_file,
     metrics_file = metrics_file,
-    metrics = plot_metrics
+    metrics      = plot_metrics
   )
   
   invisible(result)
@@ -622,319 +622,131 @@ SegOne <- function(a,
 # INTERNAL HELPER FUNCTIONS
 ################################################################################
 
-#' @title Segment wood component (internal)
-#' @description Identifies wood components through voxelization, DBSCAN clustering,
-#'   and PCA-based filtering for cylindrical structures
+#' @title LOR - Ligneous Object Recognition (internal, unified)
+#' @description Identifies ligneous (wood) components through voxelization, DBSCAN clustering,
+#'   and PCA-based filtering for cylindrical structures.
+#'   Uses shared_utils.R functions for voxelization and shape calculation.
 #' @keywords internal
 #' @noRd
-.segment_wood_unified <- function(AGB, dim, th, eps, mpts, h_tree, N, R, 
+.lor_segment_unified <- function(AGB, dim, th, eps, mpts, h_tree, N, R,
                                    plot, output_path) {
-  
+
   # Convert to data.table
   setDT(AGB)
   colnames(AGB) <- c('x', 'y', 'z')
-  
-  # Voxelization: assign each point to a voxel
-  AAvox <- data.table(
-    x = AGB$x, 
-    y = AGB$y, 
-    z = AGB$z,
-    u = as.integer(AGB$x / dim) + 1,
-    v = as.integer(AGB$y / dim) + 1,
-    w = as.integer(AGB$z / dim) + 1
-  )
-  
-  # Count points per voxel
-  AAvox1 <- AAvox[, .N, by = .(u, v, w)]
-  
-  # Filter voxels by minimum point threshold
-  AAvoxels <- AAvox1[N >= th]
-  
+
+  # Voxelization using shared function
+  AGB <- .voxelize_core(AGB, dim, min_points = 1L, return_points = TRUE)
+  AAvoxels <- AGB[, .N, by = .(u, v, w)][N >= th]
+
   if (nrow(AAvoxels) == 0) {
-    stop('No voxels generated with threshold th = ', th, 
+    stop('No voxels generated with threshold th = ', th,
          '. Try reducing th or dimVox.', call. = FALSE)
   }
-  
+
   message("    Voxels generated: ", format(nrow(AAvoxels), big.mark = ","))
   message("    Running DBSCAN clustering...")
-  
+
   # DBSCAN clustering on voxel centroids
   agbw <- as.matrix(AAvoxels[, .(u, v, w)])
   b <- dbscan(agbw, eps = eps, minPts = mpts)
-  y <- data.table(u = agbw[,1], v = agbw[,2], w = agbw[,3], cls = b$cluster)
-  
+  AAvoxels[, cls := b$cluster]
+
   # Analyze cluster sizes
-  freq_cls <- y[, .N, by = cls]
+  freq_cls <- AAvoxels[, .N, by = cls]
   setnames(freq_cls, "N", "num")
-  good_cluster <- freq_cls[num > N]
-  
+  good_cluster <- freq_cls[num > N & cls > 0]
+
   if (nrow(good_cluster) == 0) {
     stop('No clusters larger than N = ', N, ' voxels detected. ',
          'Try reducing N, eps, or increasing mpts.', call. = FALSE)
   }
-  
+
   message("    Clusters found: ", nrow(good_cluster), " (>", N, " voxels)")
   message("    Applying PCA shape filter (R > ", R, ")...")
-  
-  # PCA-based filtering for cylindrical/linear structures (wood)
-  cluster <- data.table()
-  clusters_tested <- 0
-  clusters_accepted <- 0
-  
-  for (CLS in good_cluster$cls) {
-    if (CLS == 0) next  # Skip noise cluster
-    
-    clusters_tested <- clusters_tested + 1
-    pop_cls <- freq_cls[cls == CLS, num]
-    valCls <- y[cls == CLS]
-    d <- as.matrix(valCls[, .(u, v, w)])
-    
-    # Check minimum height if specified
-    if (h_tree > 0) {
-      height_voxels <- max(d[,3]) - min(d[,3])
-      if (height_voxels * dim < h_tree) next
+
+  # Height filter if specified
+  if (h_tree > 0) {
+    h_tree_voxels <- h_tree / dim
+    cluster_heights <- AAvoxels[cls %in% good_cluster$cls,
+                                .(height = max(w) - min(w)), by = cls]
+    valid_height <- cluster_heights[height >= h_tree_voxels, cls]
+    good_cluster <- good_cluster[cls %in% valid_height]
+
+    if (nrow(good_cluster) == 0) {
+      stop('No clusters meet minimum height requirement. ',
+           'Try reducing h_tree parameter.', call. = FALSE)
     }
-    
-    # Principal Component Analysis
-    h <- prcomp(d)
-    sdev <- h$sdev
-    p <- sdev[1]  # First principal component (elongation)
-    s <- summary(h)
-    w_pca <- s$importance
-    q <- w_pca[2, 1]  # Proportion of variance explained by first PC
-    r <- p * q  # Shape parameter
-    
-    # Filter by shape parameter (higher = more linear/cylindrical)
-    if (r < R) next
-    
-    clusters_accepted <- clusters_accepted + 1
-    
-    # Add to accepted clusters
-    cluster0 <- data.table(
-      u = valCls$u, 
-      v = valCls$v, 
-      w = valCls$w, 
-      cls = valCls$cls, 
-      r = r, 
-      pop_cls = pop_cls
-    )
-    cluster <- rbind(cluster, cluster0)
   }
-  
-  if(nrow(cluster) == 0) {
+
+  # Use shared shape R calculation
+  cluster_stats <- .calculate_shape_r(AAvoxels, good_cluster$cls)
+
+  # Filter by shape parameter
+  valid_clusters <- cluster_stats[r > R]
+  clusters_tested <- nrow(cluster_stats)
+  clusters_accepted <- nrow(valid_clusters)
+
+  if(clusters_accepted == 0) {
     stop('No wood clusters detected after PCA filtering. ',
          'Try adjusting parameters:\n',
          '  - Reduce R (less strict shape requirement)\n',
          '  - Adjust eps or mpts (change clustering sensitivity)\n',
          '  - Reduce N (accept smaller clusters)', call. = FALSE)
   }
-  
+
   message("    Wood clusters accepted: ", clusters_accepted, " / ", clusters_tested)
-  message("    Mean shape parameter R: ", round(mean(cluster$r), 2))
-  
-  # Map voxels back to original points
-  woodpoint0 <- merge(AAvox, cluster, by = c("u", "v", "w"))
-  woodpoint <- woodpoint0[, .(x, y, z, cls)]
-  
-  # Save wood points
-  wood_file <- file.path(output_path, paste0(plot, "_Wood_eps", eps, "_mpts", mpts, ".txt"))
-  fwrite(woodpoint, wood_file)
-  
+  message("    Mean shape parameter R: ", round(mean(valid_clusters$r), 2))
+
+  # Extract accepted cluster voxels
+  cluster <- AAvoxels[cls %in% valid_clusters$cls]
+  cluster <- merge(cluster, valid_clusters[, .(cls, r, n_voxels)], by = "cls")
+
+  # Map voxels back to original points (fast keyed join)
+  setkey(cluster, u, v, w)
+  setkey(AGB, u, v, w)
+  woodpoint <- cluster[AGB, nomatch = 0][, .(x, y, z, cls)]
+
   return(list(
     wood_points = woodpoint,
-    wood_voxels = cluster,
-    wood_file = wood_file
+    wood_voxels = cluster
   ))
 }
 
 #' @title Separate foliage from wood (internal)
 #' @description Extracts foliage points by subtracting wood-occupied voxels
-#'   from total point cloud using voxel-based approach
+#'   from total point cloud using voxel-based approach.
+#'   Uses shared_utils.R voxelization functions.
 #' @keywords internal
 #' @noRd
 .separate_foliage_unified <- function(AGB, woodpoint, plot, eps, mpts, output_path) {
-  
+
   # Use 0.2m voxel size for foliage separation (consistent with Forest_seg)
   voxel_size <- 0.2
-  
+
   setDT(woodpoint)
   setDT(AGB)
   colnames(AGB) <- c('x', 'y', 'z')
-  
+
   message("  Voxelizing at ", voxel_size, " m resolution...")
-  
-  # Voxelize wood points
-  AAvoxL <- woodpoint[, .(
-    u = as.integer(x / voxel_size) + 1,
-    v = as.integer(y / voxel_size) + 1, 
-    w = as.integer(z / voxel_size) + 1
-  )]
-  
-  AAvox2L <- AAvoxL[, .N, by = .(u, v, w)]
-  
+
+  # Voxelize woodpoints using shared function
+  woodpoint <- .voxelize_core(woodpoint, voxel_size, min_points = 1L, return_points = TRUE)
+  wood_voxels <- unique(woodpoint[, .(u, v, w)])
+  setkey(wood_voxels, u, v, w)
+
   # Voxelize all points
-  AAvoxA <- AGB[, .(
-    x, y, z,
-    u = as.integer(x / voxel_size) + 1,
-    v = as.integer(y / voxel_size) + 1,
-    w = as.integer(z / voxel_size) + 1
-  )]
-  
-  AAvox2A <- AAvoxA[, .N, by = .(u, v, w)]
-  
-  # Subtract wood voxels from all voxels (anti-join)
+  AGB <- .voxelize_core(AGB, voxel_size, min_points = 1L, return_points = TRUE)
+  setkey(AGB, u, v, w)
+
+  # Anti-join to exclude wood voxels
   message("  Performing voxel-based subtraction...")
-  setkey(AAvox2L, u, v, w)
-  setkey(AAvox2A, u, v, w)
-  AAvoxD <- AAvox2A[!AAvox2L]
-  
-  # Map non-wood voxels back to original points
-  setkey(AAvoxD, u, v, w)
-  setkey(AAvoxA, u, v, w)
-  AGB_def0 <- AAvoxD[AAvoxA, nomatch = 0]
-  AGB_def <- AGB_def0[, .(x, y, z)]
-  
-  # Save foliage points
-  foliage_file <- file.path(output_path, paste0(plot, "_AGBnoWOOD_eps", eps, "_mpts", mpts, ".txt"))
-  fwrite(AGB_def, foliage_file)
-  
+  AGB_def <- AGB[!wood_voxels][, .(x, y, z)]
+
+  # Clean up temporary columns
+  woodpoint[, c("u", "v", "w") := NULL]
+
   return(AGB_def)
-}
-
-#' @title Calculate DBH with enhanced validation (v2)
-#' @description Calculates DBH at 1.3 m using Pratt circle fitting with:
-#'   - Maximum diameter: 3.0 m (300 cm) for large/monumental trees
-#'   - RMSE quality check: maximum 5 cm fitting error
-#'   - Minimum 5 points at measurement height
-#' @param tree_metrics Data.table with tree base coordinates and Z_min
-#' @param woodpoint Wood points with coordinates
-#' @return Updated tree_metrics with DBH, DBH_cm, and DBH_valido columns
-#' @keywords internal
-#' @noRd
-.calculate_dbh_v2 <- function(tree_metrics, woodpoint) {
-  
-  # v4.1.1: CRITICAL SAFETY CHECK - ensure tree_metrics is a data.table
-  if (!inherits(tree_metrics, "data.table")) {
-    message("    X ERROR: tree_metrics is not a data.table!")
-    message("    Type: ", class(tree_metrics))
-    # Try to convert if possible
-    if (is.data.frame(tree_metrics)) {
-      setDT(tree_metrics)
-      message("    Converted data.frame to data.table")
-    } else {
-      stop("tree_metrics must be a data.table or data.frame", call. = FALSE)
-    }
-  }
-  
-  # DBH parameters (UPDATED for v2)
-  dbh_height <- 1.3      # Standard breast height (m)
-  dbh_tol <- 0.05        # Tolerance for point selection (m)
-  min_radius <- 0.025    # Minimum valid radius: 2.5 cm (5 cm DBH)
-  max_radius <- 1.5      # Maximum valid radius: 1.5 m (300 cm DBH) - UPDATED to 3m diameter
-  max_rmse <- 0.05       # Maximum RMSE for circle fit: 5 cm - NEW in v2
-  min_points <- 5        # Minimum points required for reliable fitting
-  
-  # Get tree base elevation
-  base_z <- tree_metrics$Z_min
-  
-  # Calculate target height for DBH measurement
-  target_z <- base_z + dbh_height
-  
-  message("    Target DBH height: ", round(target_z, 2), " m (base + 1.3 m)")
-  
-  # Extract points at breast height
-  pts <- woodpoint[
-    z >= (target_z - dbh_tol) & 
-      z <= (target_z + dbh_tol), 
-    .(x, y)
-  ]
-  
-  message("    Points at breast height: ", nrow(pts))
-  
-  # Validate sufficient points
-  if(nrow(pts) < min_points) {
-    message("    Insufficient points (need at least ", min_points, ")")
-    tree_metrics[, `:=`(DBH = NA_real_, DBH_cm = NA_real_, DBH_valido = FALSE)]
-    return(tree_metrics)
-  }
-  
-  # Attempt circle fitting using Pratt algorithm
-  # Initialize results to store DBH and RMSE separately
-  dbh_result <- NA_real_
-  rmse_result <- NA_real_
-  validation_passed <- FALSE
-  
-  tryCatch({
-    # Convert to matrix for conicfit
-    pts_matrix <- as.matrix(pts)
-    
-    # Apply Pratt circle fitting (robust to noise)
-    params <- conicfit::CircleFitByPratt(pts_matrix)
-    
-    # Extract parameters
-    center_x <- params[1]
-    center_y <- params[2]
-    radius <- params[3]
-    diameter <- radius * 2
-    
-    # Calculate fit quality (RMSE)
-    distances <- sqrt((pts$x - center_x)^2 + (pts$y - center_y)^2)
-    fit_rmse <- sqrt(mean((distances - radius)^2))
-    
-    message("    Fitted radius: ", round(radius, 3), " m")
-    message("    Fitted diameter: ", round(diameter * 100, 1), " cm")
-    message("    Fit RMSE: ", round(fit_rmse, 4), " m (", round(fit_rmse * 100, 2), " cm)")
-    
-    # ALWAYS store the calculated values
-    dbh_result <- diameter
-    rmse_result <- fit_rmse
-    
-    # Validate radius range
-    if(radius < min_radius || radius > max_radius) {
-      message("    X Radius out of valid range")
-      message("      (valid: ", min_radius, " - ", max_radius, " m = ", 
-              min_radius*200, " - ", max_radius*200, " cm DBH)")
-      validation_passed <- FALSE
-    } else if(fit_rmse > max_rmse) {
-      # Validate fit quality (NEW in v2)
-      message("    X Fit quality poor: RMSE = ", round(fit_rmse, 4), 
-              " m exceeds maximum ", max_rmse, " m")
-      validation_passed <- FALSE
-    } else {
-      message("    OK DBH validation passed")
-      validation_passed <- TRUE
-    }
-    
-  }, error = function(e) {
-    message("    X Circle fitting error: ", e$message)
-    dbh_result <- NA_real_
-    rmse_result <- NA_real_
-    validation_passed <- FALSE
-  })
-  
-  # Add DBH to tree metrics (v4.1.2: ALWAYS save DBH and add RMSE column)
-  # Use separate assignments to avoid issues with data.table references
-  tree_metrics[, DBH := dbh_result]
-  tree_metrics[, DBH_cm := fifelse(
-    !is.na(DBH), 
-    round(DBH * 100, 1),  # Convert m to cm - ALWAYS save if calculated
-    NA_real_
-  )]
-  tree_metrics[, DBH_RMSE_cm := fifelse(
-    !is.na(rmse_result),
-    round(rmse_result * 100, 2),  # Save RMSE in cm as quality indicator
-    NA_real_
-  )]
-  tree_metrics[, DBH_valido := validation_passed]
-
-  # v4.1.1: SAFETY CHECK before return
-  if (!inherits(tree_metrics, "data.table")) {
-    message("    X CRITICAL ERROR: tree_metrics corrupted during DBH calculation!")
-    message("    Type: ", class(tree_metrics))
-    stop("Internal error in DBH calculation", call. = FALSE)
-  }
-  
-  return(tree_metrics)
 }
 
 ################################################################################
@@ -1163,7 +975,7 @@ SegOne <- function(a,
   #############################################################################
   
   message("\n    --- Voxelization ---")
-  message("    Voxel size: ", voxel_size, " m (", voxel_size * 100, " cm)")
+  message("    Voxel size: ", round(voxel_size, 2), " m (", round(voxel_size * 100, 1), " cm)")
   
   # Assign each point to a voxel
   agb_vox <- agb_buffer[, .(

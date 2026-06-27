@@ -48,7 +48,10 @@ generate_forest_floor <- function(x_range, y_range, resolution = 0.1, roughness 
 
 # Test principale
 test_that("SegOne funziona correttamente con una scena forestale realistica", {
-  
+
+  # SegOne writes a classified LAS file, which requires the optional 'lidR' package
+  skip_if_not_installed("lidR")
+
   # Usa withr per gestione temporanea
   temp_path <- withr::local_tempdir()
   
@@ -98,23 +101,23 @@ test_that("SegOne funziona correttamente con una scena forestale realistica", {
     )
   })
   
-  # I nomi file secondo SegOne_v4_1_2.R: <filename>_dim<dimVox>_th<th>_Wood_eps<eps>_mpts<mpts>.txt
-  wood_file <- file.path(temp_path, "test_tree_dim2_th1_Wood_eps2_mpts6.txt")
-  leaf_file <- file.path(temp_path, "test_tree_dim2_th1_AGBnoWOOD_eps2_mpts6.txt")
-  
-  expect_true(file.exists(wood_file), 
-              paste("File di legno non trovato:", wood_file))
-  expect_true(file.exists(leaf_file), 
-              paste("File di foglie non trovato:", leaf_file))
-  
-  # Verifica contenuto dei file solo se esistono
-  if (file.exists(wood_file) && file.exists(leaf_file)) {
-    wood <- fread(wood_file)
-    leaf <- fread(leaf_file)
-    
+  # SegOne v4.2 output: single classified LAS file
+  # Filename: <filename>_dim<dimVox>_th<th>_eps<eps>_mpts<mpts>.las
+  las_file <- file.path(temp_path, "test_tree_dim2_th1_eps2_mpts6.las")
+
+  expect_true(file.exists(las_file),
+              paste("File LAS non trovato:", las_file,
+                    "\nFile presenti:", paste(list.files(temp_path), collapse = ", ")))
+
+  # Verifica contenuto del file LAS solo se esiste
+  if (file.exists(las_file)) {
+    las <- lidR::readLAS(las_file)
+    wood <- las@data[Classification == 4L]
+    leaf <- las@data[Classification == 5L]
+
     expect_gt(nrow(wood), 100, "Numero insufficiente di punti del tronco.")
     expect_gt(nrow(leaf), 100, "Numero insufficiente di punti della chioma.")
-    expect_gt(max(wood$z, na.rm = TRUE), 2, 
+    expect_gt(max(wood$Z, na.rm = TRUE), 2,
               "Il tronco dovrebbe essere alto almeno 2m.")
   }
 })

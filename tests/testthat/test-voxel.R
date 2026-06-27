@@ -74,7 +74,8 @@ test_that("Voxels funziona correttamente con dati forestali", {
       filename = "test_voxels",
       dimVox = 5,
       th = 2,
-      output_path = temp_path
+      output_path = temp_path,
+      coordinate_precision = "mm"  # Test coordinate precision parameter
     )
   })
   
@@ -90,7 +91,7 @@ test_that("Voxels funziona correttamente con dati forestali", {
     
     # Verifiche base
     expect_equal(ncol(voxel_output), 4, 
-                 "Il file voxel dovrebbe avere 4 colonne: u, v, w, N.")
+                 info = "Il file voxel dovrebbe avere 4 colonne: u, v, w, N.")
     expect_true(all(voxel_output$N >= 2), 
                 "Il numero di punti per voxel non rispetta la soglia.")
     expect_true(all(voxel_output$u >= 1), 
@@ -102,4 +103,46 @@ test_that("Voxels funziona correttamente con dati forestali", {
     expect_gt(nrow(voxel_output), 0,
               "Dovrebbero esserci voxel generati")
   }
+})
+
+# Test coordinate_precision parameter
+test_that("Voxels gestisce correttamente il parametro coordinate_precision", {
+
+  # Genera dati di test più densi per evitare voxel vuoti
+  set.seed(456)
+  test_data <- data.frame(
+    x = rep(seq(0, 10, by = 0.1), 10),
+    y = rep(seq(0, 10, by = 0.1), each = 10),
+    z = runif(1010, 0, 5)
+  )
+
+  temp_path <- withr::local_tempdir()
+
+  # Test con precision "mm" e th=1 per dati sparsi
+  expect_no_error({
+    Voxels(
+      a = test_data,
+      filename = "test_mm",
+      dimVox = 10,  # voxel più grandi per catturare più punti
+      th = 1,       # soglia più bassa
+      output_path = temp_path,
+      coordinate_precision = "mm"
+    )
+  })
+
+  # Test con precision "cm"
+  expect_no_error({
+    Voxels(
+      a = test_data,
+      filename = "test_cm",
+      dimVox = 10,
+      th = 1,
+      output_path = temp_path,
+      coordinate_precision = "cm"
+    )
+  })
+
+  # Verifica che i file siano stati creati
+  expect_true(file.exists(file.path(temp_path, "test_mm_dim10_th1_vox.txt")))
+  expect_true(file.exists(file.path(temp_path, "test_cm_dim10_th1_vox.txt")))
 })
