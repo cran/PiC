@@ -1,8 +1,8 @@
-93a8541e9234bec27ac32a117c48338c *DESCRIPTION
+ca8f1b285d453030bad96a27583403ad *DESCRIPTION
 284aba727e27f4f15d9cae58299a5d8d *NAMESPACE
-16af0d0da8b0434f8bc5fa1b4e929df4 *NEWS.md
+4ea7b220f4e56c043b763e9022d3ed44 *NEWS.md
 1e06e41152c86b7f0a7f136d6f96e179 *R/Floseg_v3.R
-a0691f2a5325fe451e8507ef437553de *R/Forest_seg_v3_3_9.r
+9fcaf5a26758587a0fdc8d38b387ea77 *R/Forest_seg_v3_3_9.r
 a56041e74c24c11a87dbfef22c1ce425 *R/PiC-package.R
 8a45a905e98968fb85554edc12fe8146 *R/Run_app.R
 611306b26833e56dd57afb641d17f41e *R/SegOne_v4_1_4.R
@@ -12,7 +12,7 @@ c3ecbfb0e372e8b9c52923a23cb73388 *R/metrics_from_las.R
 d57105ecea746704273c06b59a155433 *R/pic_analyze_cloud.R
 ce046e820c076910725d984d7ed0dcbd *R/shared_utils.R
 f860abfa60fdcb99bdfd647e502966c7 *R/voxel_utils.R
-735b3108e94df5398c517e220f1cb74f *README.md
+b8e7648dd32fe3b5380e9d504499d349 *README.md
 76e123f5dcc8dee07678412adc0a2a84 *build/partial.rdb
 80e1724f84acaf586f5170739eab1ae9 *inst/WORDLIST
 17a10b762f5cb96309c688ffc24f9c01 *inst/shinyapp/global.R
@@ -22,7 +22,7 @@ aedde51aabe4663dd0af241e9876400e *inst/shinyapp/www/logo_ibe.png
 b81c4637ece798ff32a61f62e330acf2 *inst/shinyapp/www/logo_pic.png
 3c6fba750c899e2f448f453e57db2a3a *inst/shinyapp/www/styles.css
 4e12601fbc1b87a1c4549f0b2dc7e774 *man/Floseg.Rd
-882b4152f38822dde97ca7c2addc8330 *man/Forest_seg.Rd
+e640df158563fa3e4cbb48d3a0fc1ee2 *man/Forest_seg.Rd
 9c289a132b31fd12f9e7fd28d8521615 *man/PiC-package.Rd
 c5cce37227e2c94137bc008c5de9a66b *man/SegOne.Rd
 fdce6c02292ad0227d808e7a5bdefe65 *man/Voxels.Rd

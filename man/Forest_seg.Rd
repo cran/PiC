@@ -2,7 +2,7 @@
 % Please edit documentation in R/Forest_seg_v3_3_9.r
 \name{Forest_seg}
 \alias{Forest_seg}
-\title{Forest component segmentation with complete float coordinates}
+\title{Forest component segmentation, plot and tree metrics}
 \usage{
 Forest_seg(
   a,
@@ -115,37 +115,130 @@ Fine resolution is automatically set to half. DSM uses same resolution for heigh
 \item{...}{Currently unused; reserved for future extensions}
 }
 \value{
-List containing tree metrics, file paths, and analysis results
+A named list with the in-memory \code{tree_metrics} table, the paths
+  of the files written (\code{tree_report_file}, \code{plot_report_file},
+  \code{las_file} or, in XYZ mode, the per-class \code{crown_file},
+  \code{understory_file}, \code{wood_file}, \code{noiseL_file},
+  \code{noiseH_file}, \code{non_valid_trees_file}), the \code{parameters_log}
+  path, and \code{shift_info} (the applied coordinate shift).
 }
 \description{
-Segments point cloud into forestry layers using fully optimized float processing.
-Integrates the GAB (Geometrical Aggregation of Biomass) Voronoi + Parallel CBH calculation system.
+\code{Forest_seg()} is the main end-to-end routine of the package. It takes a
+raw terrestrial or mobile laser scanning (TLS/MLS) point cloud and runs a
+complete eight-stage pipeline that reconstructs the forest floor, recognises
+the woody structures, measures individual trees, separates crown from
+understory, and writes fully classified point clouds together with per-tree
+and per-plot reports and a reproducibility log.
 
-**NEW in v3.3:**
-
-- CBH BFS uses direct vertical adjacency only (no gap jumps); targets the lowest foliated branch
-- crown_volume_m3 / understory_volume_m3 written to plot_report
-- Crown Packing Index (CPI) and unused helpers removed
-
-**Core (GAB):**
-
-- Integrated GAB (Geometrical Aggregation of Biomass) Voronoi + Parallel CBH calculation
-- Hexagonal tessellation replaces polar sector approach
-- Crown + Wood voxel integration for spatial continuity
-- Multi-core parallel processing for CBH
-- BFS connectivity tracing: trunk -> branches -> foliage
-
-**Architecture:**
-
-- All processing uses native float coordinates (x, y, z)
-- Global shift applied once at start for numerical precision
-- Reverse shift applied once at end for outputs
+All processing is performed on native float coordinates. A single global
+shift is applied at the start for numerical precision and reversed once at
+the end, so that output coordinates are returned in the original reference
+system. The wood and crown analysis relies on three dedicated algorithms,
+\strong{LOR} (Ligneous Object Recognition), \strong{DAV} (Directional
+Anisotropy of Vegetation) and \strong{GAB} (Geometrical Aggregation of
+Biomass), described in the Details section.
 }
 \details{
-**Fixed internal parameters (not exposed in interface):**
+\strong{Processing pipeline (8 stages)}
+\enumerate{
+  \item \emph{Load and shift} - the input (data frame or \code{.xyz} /
+    \code{.txt} / \code{.las} / \code{.laz} file) is coerced to an
+    \code{x, y, z} table and a global coordinate shift is applied.
+  \item \emph{Forest floor extraction} - a coarse/fine ground model (DTM)
+    separates the forest floor from low vegetation and above-ground biomass
+    (AGB).
+  \item \emph{LOR (Ligneous Object Recognition)} - woody points (trunks and
+    branches) are identified.
+  \item \emph{Tree detection and metrics} - tree positions and heights are
+    derived from the woody clusters.
+  \item \emph{DBH} - diameter at breast height is fitted at multiple heights.
+  \item \emph{DAV (Directional Anisotropy of Vegetation)} - foliage is split
+    into tree crown and understory.
+  \item \emph{GAB (Geometrical Aggregation of Biomass)} - crown base height
+    (CBH) is estimated.
+  \item \emph{Output} - the classified point cloud, the reports and the log
+    are written.
+}
+
+\strong{Point classification scheme}
+
+Every point is assigned an integer class, consistent with the codes stored in
+the classified LAS file:
 \itemize{
-  \item dtm_fine_res: Automatically set to dtm_coarse_res / 2
-  \item dbh_heights: Fixed at c(1.3, 1.8, 2.3) meters
-  \item dbh_min_points: Fixed at 8 (works well for both Pratt and Landau fitting)
+  \item \code{2} Forest floor (ground / vegetal soil)
+  \item \code{3} Understory (low vegetation and shrubs below the crown)
+  \item \code{4} Wood (trunks and branches)
+  \item \code{5} Crown / foliage
+  \item \code{6} Non-valid trees (clusters that failed DBH validation)
+  \item \code{7} Noise (isolated or non-classifiable points)
+}
+
+\strong{LOR - Ligneous Object Recognition (stage 3)}
+
+AGB points are voxelised (\code{dimVox}, \code{th}) and grouped with a
+density-based clustering (DBSCAN, parameters \code{eps} / \code{mpts}).
+Clusters are kept as woody structures when they exceed a minimum size
+(\code{N}), satisfy a linearity/quality filter (\code{w_linear}) and reach a
+minimum trunk length (\code{h_trunk}). A dedicated rescue pass
+(\code{h_rescue_min}-\code{h_rescue_max}) recovers woody points in the height
+band where trunks and low branches are most often missed.
+
+\strong{DAV - Directional Anisotropy of Vegetation (stage 6)}
+
+The remaining foliage is voxelised at \code{canopy_vox_dim} and filtered by a
+minimum density (\code{canopy_min_density}). Voxels are clustered
+(\code{dav_eps} / \code{dav_minPts}) and split into crown and understory using
+an adaptive height threshold derived from the median tree height
+(\code{dav_height_factor}, \code{dav_median_height_factor}, capped by
+\code{dav_understory_max_start}). Low vegetation from the forest floor stage
+is assigned directly to the understory. The voxel classification is then
+mapped back to the original points, and crown and understory volumes are
+accumulated for the plot report.
+
+\strong{GAB - Geometrical Aggregation of Biomass / CBH (stage 7)}
+
+When \code{calculate_cbh = TRUE}, crown and wood voxels are merged for spatial
+continuity and projected onto a hexagonal tessellation (\code{cbh_hex_side}).
+Each foliage cell is assigned to the nearest tree by Voronoi partitioning on
+voxel coordinates, and a breadth-first connectivity trace (trunk to branches
+to foliage) identifies the lowest continuously foliated branch, whose height
+is reported as the crown base height. The step runs in parallel across the
+available cores. A minimum foliage extent (\code{cbh_min_branch_length})
+guards against spurious detections.
+
+\strong{DBH measurement (stage 5)}
+
+Diameter is estimated by circle fitting (Pratt/Landau) on horizontal slices
+at 1.3 m, with fallbacks at 1.8 m and 2.3 m. A fit is accepted only within the
+radius range (\code{dbh_min_radius}-\code{dbh_max_radius}) and below the
+maximum RMSE (\code{dbh_max_rmse}); trees failing all heights are flagged as
+non-valid (class 6).
+
+\strong{Outputs}
+\itemize{
+  \item \emph{Classified point cloud} - by default a single classified LAS
+    file (\code{output_format = "las"}) carrying the class codes above; with
+    \code{output_format = "xyz"} one plain-text file per class is written
+    instead.
+  \item \emph{Tree report} (\code{<filename>_tree_report.csv}) - one row per
+    tree: identifier, class, position (X, Y, Z), height, DBH and its RMSE,
+    validity flag, and CBH when computed.
+  \item \emph{Plot report} (\code{<filename>_plot_report.csv}) - stand-level
+    statistics including tree density, basal area, crown and understory
+    volume, and canopy coverage.
+  \item \emph{CBH diagnostics} - per-tree CBH details, written when
+    \code{calculate_cbh = TRUE}.
+  \item \emph{Parameters log} - a complete record of every parameter (exposed
+    and internal), the input summary, the coordinate shift, the
+    software/system versions and the timing, for full reproducibility.
+}
+Report and log writing is controlled by \code{generate_reports}.
+
+\strong{Fixed internal parameters (not exposed in the interface)}
+\itemize{
+  \item \code{dtm_fine_res}: automatically set to \code{dtm_coarse_res / 2}
+  \item \code{dbh_heights}: fixed at \code{c(1.3, 1.8, 2.3)} metres
+  \item \code{dbh_min_points}: fixed at 8 (works well for both Pratt and
+    Landau fitting)
 }
 }

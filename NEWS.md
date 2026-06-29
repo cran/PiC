@@ -1,3 +1,21 @@
+# PiC 3.3.1
+
+## Changes
+
+* Moved `lidR` from `Imports` to `Suggests`: LAS/LAZ reading and writing are now
+  optional and guarded with `requireNamespace()`, so the package installs and
+  works (with `.xyz`/`.txt` data) even when `lidR` is unavailable.
+* Declared the maintainer repository for `lidR` via `Additional_repositories`.
+
+## Documentation
+
+* Substantially expanded the `Forest_seg()` documentation: full 8-stage
+  pipeline, point classification scheme (forest floor, understory, wood, crown,
+  non-valid trees, noise), the LOR, DAV and GAB algorithms, DBH measurement, the
+  LAS/XYZ outputs, the tree/plot reports and the parameters log, and the return
+  value. Also noted that `Forest_seg()` is designed for very large clouds (up to
+  ~600M points / >10 GB on a 36 GB workstation, ~1M points/s).
+
 # PiC 3.3
 
 ## New features
